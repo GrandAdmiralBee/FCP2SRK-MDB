@@ -3,7 +3,7 @@ use regex::Regex;
 
 use std::collections::HashMap;
 
-use crate::FCP;
+use super::FCP;
 
 pub fn join_log_lines(buffer: &String) -> String {
     let mut res = String::new();
@@ -169,7 +169,7 @@ pub fn parse_line(
         }
     }
 
-    let mut new_line = format!("QString mdb_message = QString({})", mdb_match);
+    let mut new_line = format!("mdb_message = QString({})", mdb_match);
     for string in strings_vec {
         new_line = format!("{}.arg({})", new_line, string);
     }

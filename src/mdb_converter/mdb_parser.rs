@@ -1,9 +1,9 @@
 use rayon::prelude::*;
 use regex::Regex;
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::{Arc, RwLock};
 
-use crate::FCP;
+use super::FCP;
 
 pub fn get_loggers(paths: &[String]) -> HashMap<FCP, HashMap<String, String>> {
     let mut loggers = HashMap::new();

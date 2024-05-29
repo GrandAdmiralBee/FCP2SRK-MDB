@@ -1,142 +1,64 @@
 mod cli;
-mod mdb_parser;
-mod parser;
+mod mdb_converter;
+mod tui;
 
-use colored::*;
-use parser::parse_line;
+use color_eyre::config::HookBuilder;
+use ratatui::{
+    backend::{Backend, CrosstermBackend},
+    buffer::Buffer,
+    layout::{Alignment, Constraint, Layout, Rect},
+    style::{palette::tailwind, Color, Modifier, Style, Stylize},
+    terminal::Terminal,
+    text::Line,
+    widgets::{
+        Block, Borders, HighlightSpacing, List, ListItem, ListState, Padding, Paragraph,
+        StatefulWidget, Widget, Wrap,
+    },
+};
 
-use std::collections::HashMap;
+use crossterm::{
+    event::{self, Event, KeyCode, KeyEventKind},
+    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+    ExecutableCommand,
+};
 
-fn main() {
-    let cli = cli::cli().unwrap();
-    let mdb_files = cli.mdb_files;
-    let cpp_files = cli.cpp_files;
+fn main() -> anyhow::Result<()> {
+    // setup terminal
+    init_error_hooks()?;
+    let terminal = init_terminal()?;
 
-    //let mdb_files = vec!["mdb/fcpasm.mdb".to_string(), "mdb/fcpse.mdb".to_string()];
-    //let cpp_files = vec!["cpp/FcpAsm.cpp".to_string()];
+    // create app and run it
+    tui::App::new().run(terminal)?;
 
-    let loggers = mdb_parser::get_loggers(&mdb_files);
+    restore_terminal()?;
 
-    for file_name in cpp_files {
-        let str = format!("------------ Editing {file_name} -------------").green();
-        println!("{str}");
-
-        let mut logger_map = HashMap::new();
-
-        loggers.iter().for_each(|(logger, _)| {
-            println!(
-                "Specify variable name for logger {:?} (for auto-search based on comments)",
-                logger
-            );
-            let mut name = String::new();
-            std::io::stdin().read_line(&mut name).unwrap();
-            let name = name.trim().to_string();
-            logger_map.insert(name, *logger);
-        });
-
-        let buffer = std::fs::read_to_string(&file_name).unwrap();
-        let str = format!("-------------- Removing multi-line logs --------------").green();
-        println!("{str}");
-        let buffer = parser::join_log_lines(&buffer);
-        let comments = parser::find_comment_around_line(&buffer, 575);
-        dbg!(comments);
-        let str = format!("-------------- Replacing logs --------------").green();
-        println!("{str}");
-
-        let mut res = String::new();
-        let mut line_num = 0;
-        for line in buffer.lines() {
-            line_num += 1;
-            if line.trim().is_empty() {
-                continue;
-            }
-            let new_line = parse_line(line, &loggers, &logger_map, &buffer, line_num);
-            if new_line.is_none() {
-                if res.len() > 0 {
-                    res.push('\n');
-                }
-                res.push_str(line);
-            } else {
-                if res.len() > 0 {
-                    res.push('\n');
-                }
-                res.push_str(&new_line.unwrap());
-            }
-        }
-
-        if !std::path::Path::new("output").exists() {
-            std::fs::create_dir("output").expect("Couldn't create output directory!");
-        }
-        let path = std::path::Path::new(&file_name);
-        let file_stem = path
-            .file_stem()
-            .expect(&format!("Couldn't take file stem for file {}", file_name))
-            .to_str()
-            .expect("Path contains non-valid UTF-8");
-        std::fs::write(&format!("output/{}.out", file_stem), res)
-            .expect("Couldn't write output file");
-    }
+    Ok(())
+}
+fn init_error_hooks() -> anyhow::Result<()> {
+    let (panic, error) = HookBuilder::default().into_hooks();
+    let panic = panic.into_panic_hook();
+    let error = error.into_eyre_hook();
+    color_eyre::eyre::set_hook(Box::new(move |e| {
+        let _ = restore_terminal();
+        error(e)
+    }))?;
+    std::panic::set_hook(Box::new(move |info| {
+        let _ = restore_terminal();
+        panic(info);
+    }));
+    Ok(())
 }
 
-#[derive(Eq, PartialEq, Hash, Copy, Clone, Debug)]
-enum FCP {
-    SE,
-    ASM,
-    DP,
-    DRC,
-    EDIF,
-    ERP,
-    GDSREADER,
-    IO,
-    LMAN,
-    ME,
-    REPORTS,
-    SDB,
-    SHELL,
-    TDM,
-    UI,
+fn init_terminal() -> anyhow::Result<Terminal<impl Backend>> {
+    enable_raw_mode()?;
+    std::io::stdout().execute(EnterAlternateScreen)?;
+    let backend = CrosstermBackend::new(std::io::stdout());
+    let terminal = Terminal::new(backend)?;
+    Ok(terminal)
 }
 
-impl FCP {
-    pub fn from_str(s: &str) -> Option<Self> {
-        match s {
-            "fcpasm" => Some(Self::ASM),
-            "fcpdp" => Some(Self::DP),
-            "fcpdrc" => Some(Self::DRC),
-            "fcpedif" => Some(Self::EDIF),
-            "fcperp" => Some(Self::ERP),
-            "fcpgdsreader" => Some(Self::GDSREADER),
-            "fcpio" => Some(Self::IO),
-            "fcplman" => Some(Self::LMAN),
-            "fcpme" => Some(Self::ME),
-            "fcpreports" => Some(Self::REPORTS),
-            "fcpsdb" => Some(Self::SDB),
-            "fcpse" => Some(Self::SE),
-            "fcpshell" => Some(Self::SHELL),
-            "fcptdm" => Some(Self::TDM),
-            "fcpui" => Some(Self::UI),
-            _ => None,
-        }
-    }
-
-    pub fn to_str(&self) -> String {
-        let s = match self {
-            Self::ASM => "fcpasm",
-            Self::DP => "fcpdp",
-            Self::DRC => "fcpdrc",
-            Self::EDIF => "fcpedif",
-            Self::ERP => "fcperp",
-            Self::GDSREADER => "fcpgdsreader",
-            Self::IO => "fcpio",
-            Self::LMAN => "fcplman",
-            Self::ME => "fcpme",
-            Self::REPORTS => "fcpreports",
-            Self::SDB => "fcpsdb",
-            Self::SE => "fcpse",
-            Self::SHELL => "fcpshell",
-            Self::TDM => "fcptdm",
-            Self::UI => "fcpui",
-        };
-        s.to_string()
-    }
+fn restore_terminal() -> anyhow::Result<()> {
+    disable_raw_mode()?;
+    std::io::stdout().execute(LeaveAlternateScreen)?;
+    Ok(())
 }

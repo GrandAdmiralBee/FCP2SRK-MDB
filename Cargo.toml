@@ -4,7 +4,12 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+anyhow = "1.0.86"
 clap = "4.5.4"
+color-eyre = "0.6.3"
 colored = "2.1.0"
+crossterm = "0.27.0"
+ratatui = { version = "0.26.3", features = ["crossterm"] }
 rayon = "1.10.0"
 regex = "1.10.4"
+tui-term = "0.1.11"
