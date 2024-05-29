@@ -1,0 +1,2 @@
+Err1 "Couldn't find file \"%s\" in %s\n"
+Err2 "Found file \"%s\"\n"
