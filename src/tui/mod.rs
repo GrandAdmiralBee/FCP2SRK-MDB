@@ -1,8 +1,5 @@
-use crossterm::{
-    event::{self, Event, KeyCode, KeyEventKind},
-    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
-    ExecutableCommand,
-};
+use color_eyre::owo_colors::OwoColorize;
+use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
 use ratatui::{
     backend::Backend,
     buffer::Buffer,
@@ -15,6 +12,16 @@ use ratatui::{
         StatefulWidget, Widget, Wrap,
     },
 };
+use std::{sync::mpsc, thread};
+
+use log::*;
+use tui_logger::*;
+
+pub mod log_list;
+
+use log_list::*;
+
+use crate::mdb_converter::parser::*;
 
 const HEADER_BG: Color = tailwind::BLUE.c950;
 const SELECTED_HEADER_BG: Color = tailwind::BLUE.c500;
@@ -24,6 +31,28 @@ const SELECTED_STYLE_FG: Color = tailwind::BLUE.c300;
 const TEXT_COLOR: Color = tailwind::SLATE.c200;
 const COMPLETED_TEXT_COLOR: Color = tailwind::GREEN.c500;
 
+#[derive(Debug)]
+pub enum AppEvent {
+    Log(String, LogLevel),
+    WidgetUp,
+    WidgetDown,
+    InputFieldChar(char),
+    InputFielddBackspace,
+    InputFieldComplete,
+    Exit,
+    StartRender,
+    WaitForInput,
+    ReplaceFileLine(usize, String),
+    InsertFileLine(usize, String),
+    Command(String),
+    ProceedWithInput,
+    JumpLine(usize),
+    NewFile(String),
+    FileLineDown,
+    FileLineUp,
+    ReadyToQuit,
+}
+
 #[derive(Clone)]
 pub struct FileViewer {
     state: ListState,
@@ -32,12 +61,9 @@ pub struct FileViewer {
     selected_line: usize,
 }
 
-pub struct Logger {
-    contents: Vec<String>,
-}
-
 pub struct InputField {
     current_text: String,
+    active: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -69,80 +95,146 @@ impl AppWidget {
 pub struct App {
     current_widget: AppWidget,
     file_viewer: FileViewer,
-    logger: Logger,
     input_field: InputField,
-    command: Option<String>,
+    ready_to_quit: bool,
 }
 
 impl App {
     pub fn new() -> Self {
-        let current_file: Vec<String> = std::fs::read_to_string("file.cpp")
-            .unwrap()
-            .lines()
-            .map(|s| s.to_string())
-            .collect();
         Self {
             file_viewer: FileViewer {
-                contents: current_file,
+                contents: Vec::new(),
                 current_line: 1,
                 selected_line: 1,
                 state: ListState::default(),
             },
-            logger: Logger {
-                contents: Vec::new(),
-            },
             input_field: InputField {
                 current_text: String::new(),
+                active: false,
             },
             current_widget: AppWidget::INPUT_FIELD,
-            command: None,
+            ready_to_quit: false,
         }
     }
 
-    pub fn run(&mut self, mut terminal: Terminal<impl Backend>) -> anyhow::Result<()> {
-        loop {
-            self.command = None;
+    pub fn run(
+        &mut self,
+        mut terminal: Terminal<impl Backend>,
+        cli: crate::cli::Args,
+    ) -> anyhow::Result<()> {
+        let (app_sender, rx) = mpsc::channel();
+        let (app2parser_sender, app2parser_receiver) = mpsc::channel();
+        let tx = app_sender.clone();
+
+        thread::spawn(move || Self::handle_input(tx));
+        thread::spawn(move || parser(cli, app_sender.clone(), app2parser_receiver));
+
+        for event in rx {
+            match event {
+                AppEvent::StartRender => (),
+                AppEvent::InputFieldChar(c) => {
+                    if self.ready_to_quit {
+                        return Ok(());
+                    }
+                    match self.current_widget {
+                        AppWidget::INPUT_FIELD => self.input_field.current_text.push(c),
+                        AppWidget::FILE_VIEWER => match c {
+                            'k' => self.file_viewer.previous(),
+                            'j' => self.file_viewer.next(),
+                            _ => (),
+                        },
+                        _ => (),
+                    }
+                }
+                AppEvent::Exit => break,
+                AppEvent::WidgetUp => self.current_widget.up(),
+                AppEvent::WidgetDown => self.current_widget.down(),
+                AppEvent::InputFielddBackspace => {
+                    if self.input_field.current_text.len() > 0 {
+                        let _ = self.input_field.current_text.pop();
+                    }
+                }
+                AppEvent::InputFieldComplete => {
+                    if self.input_field.current_text.len() > 0 && self.input_field.active {
+                        app2parser_sender
+                            .send(AppEvent::Command(self.input_field.current_text.clone()))?;
+                        self.input_field.current_text.clear();
+                        self.input_field.active = false;
+                    }
+                }
+                AppEvent::Log(line, level) => match level {
+                    LogLevel::Warn => warn!("{line}"),
+                    LogLevel::Trace => trace!("{line}"),
+                    LogLevel::Info => info!("{line}"),
+                    LogLevel::Error => error!("{line}"),
+                },
+                AppEvent::WaitForInput => {
+                    self.input_field.active = true;
+                }
+                AppEvent::JumpLine(line) => {
+                    self.file_viewer.goto_line(line);
+                }
+                AppEvent::NewFile(file) => {
+                    self.file_viewer.contents = file.lines().map(|x| x.to_string()).collect();
+                    self.file_viewer.clear();
+                }
+                AppEvent::FileLineDown => self.file_viewer.next(),
+                AppEvent::FileLineUp => self.file_viewer.previous(),
+                AppEvent::ReplaceFileLine(n, line) => self.file_viewer.contents[n - 1] = line,
+                AppEvent::InsertFileLine(n, line) => self.file_viewer.contents.insert(n - 1, line),
+                AppEvent::ReadyToQuit => {
+                    self.ready_to_quit = true;
+                    info!("------------ Finished successfully (press any key to quit) ------");
+                }
+                _ => (),
+            }
             self.draw(&mut terminal)?;
-            if let Event::Key(key) = event::read()? {
+        }
+
+        Ok(())
+    }
+
+    fn handle_input(tx_event: mpsc::Sender<AppEvent>) -> anyhow::Result<()> {
+        tx_event.send(AppEvent::StartRender)?;
+        while let Ok(event) = event::read() {
+            if let Event::Key(key) = event {
                 if key.kind == KeyEventKind::Press {
-                    match key.code {
-                        KeyCode::Esc => return Ok(()),
-                        KeyCode::Up => self.current_widget.up(),
-                        KeyCode::Down => self.current_widget.down(),
-                        KeyCode::Char(c) => match self.current_widget {
-                            AppWidget::INPUT_FIELD => self.input_field.current_text.push(c),
-                            AppWidget::FILE_VIEWER => match c {
-                                'k' => self.file_viewer.previous(),
-                                'j' => self.file_viewer.next(),
-                                _ => (),
-                            },
-                            AppWidget::LOGGER => {}
-                        },
-                        KeyCode::Enter => match self.current_widget {
-                            AppWidget::INPUT_FIELD => {
-                                self.command = Some(self.input_field.current_text.clone());
-                                self.logger
-                                    .contents
-                                    .push(self.input_field.current_text.clone());
-                                self.input_field.current_text.clear()
+                    match (key.code, key.modifiers) {
+                        (KeyCode::Char('q'), KeyModifiers::CONTROL) => {
+                            tx_event.send(AppEvent::Exit)?
+                        }
+                        (KeyCode::Up | KeyCode::Char('k'), KeyModifiers::CONTROL) => {
+                            tx_event.send(AppEvent::WidgetUp)?
+                        }
+                        (KeyCode::Down | KeyCode::Char('j'), KeyModifiers::CONTROL) => {
+                            tx_event.send(AppEvent::WidgetDown)?
+                        }
+                        (KeyCode::Up, m) => {
+                            if m != KeyModifiers::CONTROL {
+                                tx_event.send(AppEvent::FileLineUp).unwrap();
                             }
-                            _ => (),
-                        },
-                        KeyCode::Backspace => match self.current_widget {
-                            AppWidget::INPUT_FIELD => {
-                                self.input_field.current_text.pop();
+                        }
+                        (KeyCode::Down, m) => {
+                            if m != KeyModifiers::CONTROL {
+                                tx_event.send(AppEvent::FileLineDown).unwrap();
                             }
-                            _ => (),
-                        },
-                        KeyCode::Tab => match self.current_widget {
-                            AppWidget::INPUT_FIELD => self.input_field.current_text.push('\t'),
-                            _ => (),
-                        },
-                        _ => {}
+                        }
+                        (KeyCode::Char(c), m) => {
+                            if m != KeyModifiers::CONTROL {
+                                tx_event.send(AppEvent::InputFieldChar(c))?
+                            }
+                        }
+                        (KeyCode::Enter, _) => tx_event
+                            .send(AppEvent::InputFieldComplete)
+                            .expect("Crashed here"),
+                        (KeyCode::Backspace, _) => tx_event.send(AppEvent::InputFielddBackspace)?,
+                        (KeyCode::Esc, _) => tx_event.send(AppEvent::Exit)?,
+                        _ => (),
                     }
                 }
             }
         }
+        Ok(())
     }
 
     fn draw(&mut self, terminal: &mut Terminal<impl Backend>) -> anyhow::Result<()> {
@@ -180,32 +272,15 @@ impl Widget for &mut App {
 
 impl App {
     fn render_file_viewer(&mut self, area: Rect, buf: &mut Buffer, wid: AppWidget) {
-        // We create two blocks, one is for the header (outer) and the other is for list (inner).
-        let outer_block = Block::new()
-            .borders(Borders::NONE)
-            .title_alignment(Alignment::Center)
-            .title("File Viewer")
-            .fg(TEXT_COLOR)
-            .bg(match wid {
-                AppWidget::FILE_VIEWER => SELECTED_HEADER_BG,
-                _ => HEADER_BG,
-            });
-        let inner_block = Block::new()
-            .borders(Borders::NONE)
-            .fg(TEXT_COLOR)
-            .bg(NORMAL_ROW_COLOR);
-
-        // We get the inner area from outer_block. We'll use this area later to render the table.
-        let outer_area = area;
-        let inner_area = outer_block.inner(outer_area);
-
-        // We can render the header in outer_area.
-        outer_block.render(outer_area, buf);
-
+        let bg = match self.current_widget {
+            AppWidget::FILE_VIEWER => SELECTED_HEADER_BG,
+            _ => HEADER_BG,
+        };
         let items = self.file_viewer.clone();
         let items = items.to_item_vec();
         let items = List::new(items)
-            .block(inner_block)
+            .block(Block::bordered().title("Logger"))
+            .bg(bg)
             .highlight_style(
                 Style::default()
                     .add_modifier(Modifier::BOLD)
@@ -214,94 +289,51 @@ impl App {
             )
             .highlight_symbol(">")
             .highlight_spacing(HighlightSpacing::Always);
-        StatefulWidget::render(items, inner_area, buf, &mut self.file_viewer.state);
+        StatefulWidget::render(items, area, buf, &mut self.file_viewer.state);
         //Widget::render(items, inner_area, buf);
     }
 
     fn render_logger(&mut self, area: Rect, buf: &mut Buffer, wid: AppWidget) {
+        let bg = match self.current_widget {
+            AppWidget::LOGGER => SELECTED_HEADER_BG,
+            _ => HEADER_BG,
+        };
         // We show the list item's info under the list in this paragraph
-        let outer_info_block = Block::new()
-            .borders(Borders::NONE)
-            .title_alignment(Alignment::Center)
-            .title("Logger")
-            .fg(TEXT_COLOR)
-            .bg(match wid {
-                AppWidget::LOGGER => SELECTED_HEADER_BG,
-                _ => HEADER_BG,
-            });
-        let inner_info_block = Block::new()
-            .borders(Borders::NONE)
-            .padding(Padding::horizontal(1))
-            .bg(NORMAL_ROW_COLOR);
-        // This is a similar process to what we did for list. outer_info_area will be used for
-        // header inner_info_area will be used for the list info.
-        let outer_info_area = area;
-        let inner_info_area = outer_info_block.inner(outer_info_area);
-
-        // We can render the header. Inner info will be rendered later
-        outer_info_block.render(outer_info_area, buf);
-
-        let log_list: Vec<ListItem> = self
-            .logger
-            .contents
-            .iter()
-            .enumerate()
-            .map(|(x, l)| {
-                ListItem::new(Line::styled(l, TEXT_COLOR)).bg(
-                    if x == self.logger.contents.len() - 1 {
-                        ALT_ROW_COLOR
-                    } else {
-                        NORMAL_ROW_COLOR
-                    },
-                )
-            })
-            .collect();
-
-        let items = List::new(log_list)
-            .block(inner_info_block)
-            .highlight_style(
-                Style::default()
-                    .add_modifier(Modifier::BOLD)
-                    .add_modifier(Modifier::REVERSED)
-                    .fg(SELECTED_STYLE_FG),
-            )
-            .highlight_symbol(">")
-            .highlight_spacing(HighlightSpacing::Always);
-        Widget::render(items, inner_info_area, buf);
+        TuiLoggerWidget::default()
+            .style_error(Style::default().fg(Color::Red))
+            .style_debug(Style::default().fg(Color::Green))
+            .style_warn(Style::default().fg(Color::Yellow))
+            .style_trace(Style::default().fg(Color::White))
+            .block(Block::bordered().title("Logger"))
+            .style_info(Style::default().fg(Color::Cyan))
+            .style(Style::default().bg(bg))
+            .output_timestamp(None)
+            .output_separator(':')
+            .output_target(false)
+            .output_file(false)
+            .output_line(false)
+            .output_level(Some(TuiLoggerLevelOutput::Long))
+            .render(area, buf);
     }
 
     fn render_input_field(&mut self, area: Rect, buf: &mut Buffer, wid: AppWidget) {
         // We show the list item's info under the list in this paragraph
-        let outer_info_block = Block::new()
-            .borders(Borders::NONE)
-            .title_alignment(Alignment::Center)
-            .title("Input field")
-            .fg(TEXT_COLOR)
-            .bg(match wid {
-                AppWidget::INPUT_FIELD => SELECTED_HEADER_BG,
-                _ => HEADER_BG,
-            });
-        let inner_info_block = Block::new()
-            .borders(Borders::NONE)
-            .padding(Padding::horizontal(1))
-            .bg(NORMAL_ROW_COLOR);
-
-        // This is a similar process to what we did for list. outer_info_area will be used for
-        // header inner_info_area will be used for the list info.
-        let outer_info_area = area;
-        let inner_info_area = outer_info_block.inner(outer_info_area);
-
-        // We can render the header. Inner info will be rendered later
-        outer_info_block.render(outer_info_area, buf);
-
-        let input = self.input_field.current_text.as_str();
+        let bg = match self.current_widget {
+            AppWidget::INPUT_FIELD => SELECTED_HEADER_BG,
+            _ => HEADER_BG,
+        };
+        let input = match self.input_field.active {
+            false => self.input_field.current_text.clone(),
+            true => format!("> {}", &self.input_field.current_text),
+        };
         let info_paragraph = Paragraph::new(input)
-            .block(inner_info_block)
             .fg(TEXT_COLOR)
+            .bg(bg)
+            .block(Block::bordered().title("Command input field"))
             .wrap(Wrap { trim: false });
 
         // We can now render the item info
-        info_paragraph.render(inner_info_area, buf);
+        info_paragraph.render(area, buf);
     }
 }
 
@@ -319,6 +351,11 @@ fn render_footer(area: Rect, buf: &mut Buffer) {
 }
 
 impl FileViewer {
+    pub fn clear(&mut self) {
+        self.current_line = 1;
+        self.selected_line = 1;
+        self.state.select(None);
+    }
     pub fn goto_line(&mut self, line: usize) {
         if line > self.contents.len() {
             self.selected_line = self.contents.len();
@@ -339,7 +376,7 @@ impl FileViewer {
                 let bg_color = if i + 1 == self.current_line {
                     ALT_ROW_COLOR
                 } else {
-                    NORMAL_ROW_COLOR
+                    HEADER_BG
                 };
 
                 let line = if i + 1 == self.selected_line {

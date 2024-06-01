@@ -4,12 +4,18 @@ use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
 use super::FCP;
+use crate::tui::AppEvent;
 
-pub fn get_loggers(paths: &[String]) -> HashMap<FCP, HashMap<String, String>> {
+pub fn get_loggers(
+    paths: &[String],
+    tx: std::sync::mpsc::Sender<AppEvent>,
+) -> HashMap<FCP, HashMap<String, String>> {
     let mut loggers = HashMap::new();
 
     for mdb in paths {
-        println!("Loading file {}", mdb);
+        let msg = format!("Loading file {}", mdb);
+        tx.send(AppEvent::Log(msg, crate::tui::log_list::LogLevel::Info))
+            .unwrap();
         let file_name = std::path::Path::new(&mdb)
             .file_stem()
             .unwrap()

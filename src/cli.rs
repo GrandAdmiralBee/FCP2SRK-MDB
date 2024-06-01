@@ -55,6 +55,7 @@ pub fn cli() -> Option<Args> {
     })
 }
 
+#[derive(Default)]
 pub struct Args {
     pub mdb_files: Vec<String>,
     pub cpp_files: Vec<String>,

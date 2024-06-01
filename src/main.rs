@@ -1,33 +1,44 @@
 mod cli;
-mod mdb_converter;
-mod tui;
+pub mod mdb_converter;
+pub mod tui;
 
 use color_eyre::config::HookBuilder;
 use crossterm::{
-    event::{self, Event, KeyCode, KeyEventKind},
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
     ExecutableCommand,
 };
+use log::*;
 use ratatui::{
     backend::{Backend, CrosstermBackend},
-    buffer::Buffer,
-    layout::{Alignment, Constraint, Layout, Rect},
-    style::{palette::tailwind, Color, Modifier, Style, Stylize},
     terminal::Terminal,
-    text::Line,
-    widgets::{
-        Block, Borders, HighlightSpacing, List, ListItem, ListState, Padding, Paragraph,
-        StatefulWidget, Widget, Wrap,
-    },
 };
+use tui_logger::*;
 
 fn main() -> anyhow::Result<()> {
+    let cli = crate::cli::cli().unwrap();
+    let mdb_files = cli.mdb_files.clone();
+    let cpp_files = cli.cpp_files.clone();
+
+    for file in mdb_files {
+        if !std::path::Path::new(&file).exists() {
+            println!("Path {} does not exist", file);
+            return Ok(());
+        }
+    }
+    for file in cpp_files {
+        if !std::path::Path::new(&file).exists() {
+            println!("Path {} does not exist", file);
+            return Ok(());
+        }
+    }
     // setup terminal
     init_error_hooks()?;
     let terminal = init_terminal()?;
+    init_logger(LevelFilter::Trace).unwrap();
+    set_default_level(LevelFilter::Trace);
 
     // create app and run it
-    tui::App::new().run(terminal)?;
+    tui::App::new().run(terminal, cli)?;
 
     restore_terminal()?;
 
