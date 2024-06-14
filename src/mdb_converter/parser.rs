@@ -1,5 +1,4 @@
 use colored::*;
-use rayon::join;
 use regex::Regex;
 
 use std::collections::HashMap;
@@ -227,21 +226,27 @@ pub fn parse_line(
         return None;
     }
 
-    let re = Regex::new(r#"\"\s*(?P<Err>\w+)+\s*\"\s*(?P<Strings>(?:<<\s*\S+\s*)*);"#).unwrap();
+    let re = Regex::new(r#"\"\s*(?P<Err>\w+)+\s*\"\s*(?P<Strings>(?:<<.+)*);"#).unwrap();
     let cap = re.captures(line);
     let cap = match cap {
         None => return None,
         Some(_) => cap.unwrap(),
     };
     let err: &str = &cap["Err"];
+    let err = err.trim();
     let strings = &cap["Strings"].to_string();
-    let strings = strings.replace("<", "");
+    let strings = strings.replace("<", "\n");
 
-    let re = Regex::new(r#"(\S+)"#).unwrap();
     let mut strings_vec = vec![];
-    for (_, [string]) in re.captures_iter(&strings).map(|c| c.extract()) {
-        strings_vec.push(string);
+    for string in strings.lines() {
+        if !string.trim().is_empty() {
+            strings_vec.push(string.trim().to_string());
+        }
     }
+    // let re = Regex::new(r#"(\S+)"#).unwrap();
+    // for (_, [string]) in re.captures_iter(&strings).map(|c| c.extract()) {
+    //     strings_vec.push(string.trim().to_string());
+    // }
 
     let mut commented_lines = find_comment_around_line(file, line_num as usize);
     if !commented_lines.contains(err) {
@@ -338,18 +343,18 @@ pub fn parse_line(
         }
     }
 
-    let mut new_line = format!("mdb_message = QString({})", mdb_match);
+    let mut new_line = format!("QString::asprintf({}", mdb_match);
     for string in strings_vec {
-        new_line = format!("{}.arg({})", new_line, string);
+        new_line = format!("{}, {}", new_line, string);
     }
-    new_line.push(';');
+    new_line.push_str(") << ENDL;");
 
     if line.contains("qCritical") {
-        new_line.push_str(" qCritical() << mdb_message;");
+        new_line = format!("qCritical() << {}", new_line);
     } else if line.contains("qInfo") {
-        new_line.push_str(" qInfo() << mdb_message;");
+        new_line = format!("qInfo() << {}", new_line);
     } else if line.contains("qWarning") {
-        new_line.push_str(" qWarning() << mdb_message;");
+        new_line = format!("qWarning() << {}", new_line);
     };
     let re = Regex::new(r#"(?P<spaces>.*)(?:qCritical|qInfo|qWarning)"#).unwrap();
     let caps = re.captures(line).unwrap();

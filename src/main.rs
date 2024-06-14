@@ -31,7 +31,6 @@ fn main() -> anyhow::Result<()> {
             return Ok(());
         }
     }
-    // setup terminal
     init_error_hooks()?;
     let terminal = init_terminal()?;
     init_logger(LevelFilter::Trace).unwrap();

@@ -55,28 +55,7 @@ fn get_mdb_codes(mdb: &str) -> HashMap<String, String> {
 fn get_mdb(mdb: &str) -> String {
     let re = Regex::new(r#"\w+\s+(?P<mdb>\".+\")"#).unwrap();
     let cap = re.captures(mdb).unwrap();
-    let mdb_result = cap["mdb"].to_string();
+    let mut mdb_result = cap["mdb"].to_string();
 
-    let mut prev_is_percent = false;
-    let mut iterator = 0;
-    let mdb_result: String = mdb_result
-        .chars()
-        .map(|x| match x {
-            '%' => {
-                prev_is_percent = true;
-                '%'
-            }
-            's' => {
-                if prev_is_percent {
-                    prev_is_percent = false;
-                    iterator += 1;
-                    iterator.to_string().chars().next().unwrap()
-                } else {
-                    's'
-                }
-            }
-            _ => x,
-        })
-        .collect();
     mdb_result
 }

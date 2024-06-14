@@ -122,6 +122,14 @@ impl App {
         mut terminal: Terminal<impl Backend>,
         cli: crate::cli::Args,
     ) -> anyhow::Result<()> {
+        //let mdb_files = vec!["mdb/fcpasm.mdb".to_string()];
+        //let cpp_files = vec!["cpp/FcpAssignmentManager.cpp".to_string()];
+        //
+        //let cli = crate::cli::Args {
+        //    mdb_files,
+        //    cpp_files,
+        //};
+
         let (app_sender, rx) = mpsc::channel();
         let (app2parser_sender, app2parser_receiver) = mpsc::channel();
         let tx = app_sender.clone();
