@@ -269,15 +269,15 @@ impl Widget for &mut App {
         let [upper_item_list_area, lower_item_list_area, input_area] = vertical.areas(rest_area);
 
         render_title(header_area, buf);
-        self.render_file_viewer(upper_item_list_area, buf, self.current_widget);
-        self.render_logger(lower_item_list_area, buf, self.current_widget);
-        self.render_input_field(input_area, buf, self.current_widget);
+        self.render_file_viewer(upper_item_list_area, buf);
+        self.render_logger(lower_item_list_area, buf);
+        self.render_input_field(input_area, buf);
         render_footer(footer_area, buf);
     }
 }
 
 impl App {
-    fn render_file_viewer(&mut self, area: Rect, buf: &mut Buffer, wid: AppWidget) {
+    fn render_file_viewer(&mut self, area: Rect, buf: &mut Buffer) {
         let bg = match self.current_widget {
             AppWidget::FILE_VIEWER => SELECTED_HEADER_BG,
             _ => HEADER_BG,
@@ -299,7 +299,7 @@ impl App {
         //Widget::render(items, inner_area, buf);
     }
 
-    fn render_logger(&mut self, area: Rect, buf: &mut Buffer, wid: AppWidget) {
+    fn render_logger(&mut self, area: Rect, buf: &mut Buffer) {
         let bg = match self.current_widget {
             AppWidget::LOGGER => SELECTED_HEADER_BG,
             _ => HEADER_BG,
@@ -322,7 +322,7 @@ impl App {
             .render(area, buf);
     }
 
-    fn render_input_field(&mut self, area: Rect, buf: &mut Buffer, wid: AppWidget) {
+    fn render_input_field(&mut self, area: Rect, buf: &mut Buffer) {
         // We show the list item's info under the list in this paragraph
         let bg = match self.current_widget {
             AppWidget::INPUT_FIELD => SELECTED_HEADER_BG,
