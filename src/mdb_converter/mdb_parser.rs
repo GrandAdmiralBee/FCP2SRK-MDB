@@ -55,7 +55,7 @@ fn get_mdb_codes(mdb: &str) -> HashMap<String, String> {
 fn get_mdb(mdb: &str) -> String {
     let re = Regex::new(r#"\w+\s+(?P<mdb>\".+\")"#).unwrap();
     let cap = re.captures(mdb).unwrap();
-    let mut mdb_result = cap["mdb"].to_string();
+    let mdb_result = cap["mdb"].to_string();
 
     mdb_result
 }

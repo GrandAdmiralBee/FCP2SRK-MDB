@@ -53,50 +53,11 @@ pub fn parser(
         tx.send(AppEvent::NewFile(buffer.clone())).unwrap();
         let str = format!("-------------- Replacing logs --------------");
         tx.send(AppEvent::Log(str, LogLevel::Info)).unwrap();
-        tx.send(AppEvent::Log(
-            "Specify line number to put static variable declaration".to_string(),
-            LogLevel::Info,
-        ))
-        .unwrap();
-
-        let mut static_line_num = 0;
-        loop {
-            tx.send(AppEvent::WaitForInput).unwrap();
-            let mut name = String::new();
-            for event in &app2parser_receiver {
-                match event {
-                    AppEvent::Command(n) => {
-                        name = n.trim().to_string();
-                        tx.send(AppEvent::Log(name.clone(), LogLevel::Info))
-                            .unwrap();
-                        break;
-                    }
-                    _ => (),
-                }
-            }
-            if let Ok(num) = name.trim().parse::<usize>() {
-                static_line_num = num;
-                break;
-            } else {
-                tx.send(AppEvent::Log("Wrong input".to_string(), LogLevel::Error))
-                    .unwrap();
-            }
-        }
 
         let mut res = String::new();
         let mut line_num = 0;
-        let mut recording_line_num = 0;
         for line in buffer.lines() {
             line_num += 1;
-            recording_line_num += 1;
-            if line_num == static_line_num {
-                res.push('\n');
-                let str = "static QString mdb_message;";
-                res.push_str(str);
-                tx.send(AppEvent::InsertFileLine(line_num, str.to_string()))
-                    .unwrap();
-                recording_line_num += 1;
-            }
             if line.trim().is_empty() {
                 continue;
             }
@@ -106,7 +67,6 @@ pub fn parser(
                 &logger_map,
                 &buffer,
                 line_num,
-                recording_line_num,
                 tx.clone(),
                 &app2parser_receiver,
             );
@@ -121,7 +81,7 @@ pub fn parser(
                 }
                 let new_line = new_line.unwrap();
                 res.push_str(&new_line);
-                tx.send(AppEvent::ReplaceFileLine(recording_line_num, new_line))
+                tx.send(AppEvent::ReplaceFileLine(line_num, new_line))
                     .unwrap();
             }
         }
@@ -216,7 +176,6 @@ pub fn parse_line(
     logger_map: &HashMap<String, FCP>,
     file: &str,
     line_num: usize,
-    recoeding_line_num: usize,
     tx: std::sync::mpsc::Sender<AppEvent>,
     app2parser_receiver: &std::sync::mpsc::Receiver<AppEvent>,
 ) -> Option<String> {
@@ -295,7 +254,7 @@ pub fn parse_line(
         });
 
         tx.send(AppEvent::Log(base_str, LogLevel::Info)).unwrap();
-        tx.send(AppEvent::JumpLine(recoeding_line_num)).unwrap();
+        tx.send(AppEvent::JumpLine(line_num)).unwrap();
 
         loop {
             tx.send(AppEvent::WaitForInput).unwrap();

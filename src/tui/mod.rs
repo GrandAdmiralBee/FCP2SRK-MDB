@@ -1,15 +1,14 @@
-use color_eyre::owo_colors::OwoColorize;
 use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
 use ratatui::{
     backend::Backend,
     buffer::Buffer,
-    layout::{Alignment, Constraint, Layout, Rect},
-    style::{palette::tailwind, Color, Modifier, Style, Stylize},
+    layout::{Constraint, Layout, Rect},
+    style::palette::tailwind,
+    style::{Color, Modifier, Style, Stylize},
     terminal::Terminal,
     text::Line,
     widgets::{
-        Block, Borders, HighlightSpacing, List, ListItem, ListState, Padding, Paragraph,
-        StatefulWidget, Widget, Wrap,
+        Block, HighlightSpacing, List, ListItem, ListState, Paragraph, StatefulWidget, Widget, Wrap,
     },
 };
 use std::{sync::mpsc, thread};
@@ -25,7 +24,6 @@ use crate::mdb_converter::parser::*;
 
 const HEADER_BG: Color = tailwind::BLUE.c950;
 const SELECTED_HEADER_BG: Color = tailwind::BLUE.c500;
-const NORMAL_ROW_COLOR: Color = tailwind::SLATE.c950;
 const ALT_ROW_COLOR: Color = tailwind::SLATE.c900;
 const SELECTED_STYLE_FG: Color = tailwind::BLUE.c300;
 const TEXT_COLOR: Color = tailwind::SLATE.c200;
